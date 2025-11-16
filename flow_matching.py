@@ -5,6 +5,7 @@ import torch.nn.functional as F
 
 class FlowModel(nn.Module):
     def __init__(self, model: nn.Module, cfg_drop_prob):
+        super().__init__()
         self.model = model
         self.cfg_drop_prob = cfg_drop_prob
 
@@ -20,7 +21,7 @@ class FlowModel(nn.Module):
         for k in range(steps):
             t_scalar = k * dt
 
-            t = torch.full(b, t_scalar, device=self.device, dtype=self.dtype)
+            t = torch.full((b, 1), t_scalar, device=self.device, dtype=self.dtype)
 
             v_cond = self.model(x, t, cond_inst)
 
@@ -37,7 +38,7 @@ class FlowModel(nn.Module):
 
     def forward(self, cond_inst: torch.Tensor, target_inst: torch.Tensor):
         x0 = torch.randn_like(target_inst)
-        t = torch.rand(x0.shape[0])
+        t = torch.rand(x0.shape[0], device=self.device)
         t_expanded = t.view(-1, *[1]*(x0.ndim - 1))
 
         xt = t_expanded * target_inst + (1 - t_expanded) * x0
