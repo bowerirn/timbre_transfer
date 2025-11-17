@@ -155,6 +155,26 @@ class StarnetImageDataset(Dataset):
 
         if len(self.pairs) == 0:
             raise RuntimeError(f"No valid instrument pairs found in {path}")
+        
+
+        sum_vals = 0.0
+        sum_sq_vals = 0.0
+        count = 0
+
+        for mel_a, mel_b in self.pairs:
+            # mel_a, mel_b each shape: (T, n_mels)
+            sum_vals += mel_a.sum()
+            sum_vals += mel_b.sum()
+
+            sum_sq_vals += (mel_a ** 2).sum()
+            sum_sq_vals += (mel_b ** 2).sum()
+
+            count += mel_a.numel()
+            count += mel_b.numel()
+
+        self.mu = (sum_vals / count).item()
+        variance = (sum_sq_vals / count) - (self.mu ** 2)
+        self.std = float(torch.sqrt(variance + 1e-8))
 
     def __len__(self):
         return len(self.pairs)
@@ -181,6 +201,9 @@ class StarnetImageDataset(Dataset):
             cond, target = mel_a, mel_b
         else:
             cond, target = mel_b, mel_a
+
+        cond = (cond - self.mu) / self.std
+        target = (target - self.mu) / self.std
 
         return cond, target
     

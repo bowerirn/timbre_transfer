@@ -1,77 +1,55 @@
 # ChatGPT wrote this
 import os
-import argparse
 import numpy as np
 import librosa
+import torch
+import sys
+sys.path.append('.')
+
+from BigVGAN.meldataset import mel_spectrogram
 
 
-# based on https://arxiv.org/pdf/2307.04586
-SR = 16000
-N_FFT = 512
-WIN_LENGTH = int(0.02 * SR)  # 20 ms -> 320 samples
-HOP_LENGTH = WIN_LENGTH // 2 # 50% overlap -> 10 ms
-N_MELS = 128
+# based on https://arxiv.org/pdf/2206.04658
+SR = 24000
+N_FFT = 1024
+WIN_LENGTH = 1024
+HOP_LENGTH = 256
+N_MELS = 100
 FMIN = 0.0
-FMAX = 16000.0
+FMAX = 12000.0
+EPS = 1e-5  # for numerical stability
 
-input_dir = "./data/starnet_singles"        # folder containing .wav files
-output_dir = "./data/mel_specs"       # folder to save .npz files
+
+input_dir = "./data/wav"
+output_dir = "./data/mel_specs"
 os.makedirs(output_dir, exist_ok=True)
 
+def compute_bigvgan_mel(y_np: np.ndarray) -> np.ndarray:
+    # (B, T) tensor, BigVGAN expects batch dim
+    y = torch.from_numpy(y_np).float().unsqueeze(0)
 
-def compute_log_mel(y, sr=SR):
-    # Mel power spectrogram
-    S = librosa.feature.melspectrogram(
-        y=y,
-        sr=sr,
-        n_fft=N_FFT,
-        hop_length=HOP_LENGTH,
-        win_length=WIN_LENGTH,
-        window="hann",
-        n_mels=N_MELS,
-        fmin=FMIN,
-        fmax=FMAX,
-        power=2.0,
-    )
+    with torch.no_grad():
+        mel = mel_spectrogram(
+            y,
+            n_fft=N_FFT,
+            num_mels=N_MELS,
+            sampling_rate=SR,
+            hop_size=HOP_LENGTH,
+            win_size=WIN_LENGTH,
+            fmin=FMIN,
+            fmax=FMAX,
+            center=False,   # matches their training code
+        )
+        # mel shape: [B, N_MELS, T]
+        mel = mel.squeeze(0).cpu().numpy().astype(np.float32)  # (N_MELS, T)
 
-    # Convert to log-mel (dB)
-    S_db = librosa.power_to_db(S, ref=np.max)
-    return S_db
-
-
-def normalize(S):
-    """
-    Min-max normalize spectrogram S to [-1, 1].
-    Returns normalized S, and (min, max) so you can undo later.
-    """
-    S_min = S.min()
-    S_max = S.max()
-    if S_max == S_min:
-        # Avoid division by zero: just return zeros
-        return np.zeros_like(S, dtype=np.float32), float(S_min), float(S_max)
-
-    S_norm01 = (S - S_min) / (S_max - S_min)  # [0, 1]
-    S_norm = S_norm01 * 2.0 - 1.0            # [-1, 1]
-    return S_norm.astype(np.float32), float(S_min), float(S_max)
-
+    return mel
 
 def process_file(in_path, out_path):
-    # Load audio as mono 16k
     y, sr = librosa.load(in_path, sr=SR, mono=True)
+    mel = compute_bigvgan_mel(y)
+    np.savez_compressed(out_path, mel=mel)
 
-    # Compute log-mel
-    mel_db = compute_log_mel(y, sr=sr)
-
-    # Normalize full spectrogram to [-1, 1]
-    mel_norm, s_min, s_max = normalize(mel_db)
-
-    # Save as .npz (mel + min/max for potential denorm)
-    np.savez_compressed(
-        out_path,
-        mel=mel_norm,
-        min=s_min,
-        max=s_max,
-    )
 
 
 wav_files = sorted(
@@ -80,12 +58,10 @@ wav_files = sorted(
 )
 
 print(f"Found {len(wav_files)} wav files in {input_dir}")
-
 for fname in wav_files:
     in_path = os.path.join(input_dir, fname)
     base, _ = os.path.splitext(fname)
     out_path = os.path.join(output_dir, base + ".npz")
-
     print(f"Processing {fname} -> {os.path.basename(out_path)}")
     process_file(in_path, out_path)
 

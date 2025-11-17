@@ -2,12 +2,12 @@
 import os
 import torchaudio
 
-input_dir = "./data/starnet_singles"
+input_dir = "./data/wav"
 output_dir = input_dir  # overwrite
 
 os.makedirs(output_dir, exist_ok=True)
 
-target_sr = 16000
+target_sr = 24000 # SR for BigVGAN
 
 
 print(f"Resampling all wav files to {target_sr} Hz")
