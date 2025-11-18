@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from tqdm import tqdm
 
 
 class FlowModel(nn.Module):
@@ -18,7 +19,7 @@ class FlowModel(nn.Module):
         x = torch.randn_like(cond_inst, device=device, dtype=dtype)
 
         dt = 1.0 / steps
-        for k in range(steps):
+        for k in tqdm(range(steps), desc="Sampling flow model"):
             t_scalar = k * dt
 
             t = torch.full((b, 1), t_scalar, device=self.device, dtype=self.dtype)

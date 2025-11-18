@@ -70,8 +70,6 @@ class MHA(nn.Module):
 
 
     def forward(self, x, cond=None):
-        use_rope = cond is None
-
         if cond is None:
             cond = x
 
@@ -87,8 +85,7 @@ class MHA(nn.Module):
         k = self.k_proj(cond).view(*cond_shape, H, D).transpose(1, 2)  # Shape: (B, H, L, D)
         v = self.v_proj(cond).view(*cond_shape, H, D).transpose(1, 2)  # Shape: (B, H, L, D)
         
-        if use_rope:
-            q, k = self.rope(q, k)
+        q, k = self.rope(q, k)
         
         att = F.scaled_dot_product_attention(
             q, k, v, 
@@ -121,7 +118,15 @@ class DiT_Block(nn.Module):
         self.input_dim = input_dim
 
         # Self-attention
-        self.attention = MHA(
+        self.self_attn = MHA(
+            input_dim=input_dim,
+            num_heads=num_heads,
+            head_dim=head_dim,
+            p_drop=attn_pdrop,
+            causal=causal,
+        )
+
+        self.cross_attn = MHA(
             input_dim=input_dim,
             num_heads=num_heads,
             head_dim=head_dim,
@@ -136,37 +141,41 @@ class DiT_Block(nn.Module):
         )
 
         self.att_ln = nn.LayerNorm(input_dim)
+        self.cross_ln = nn.LayerNorm(input_dim)
         self.mlp_ln = nn.LayerNorm(input_dim)
 
         # AdaLN learned params: γ1, β1, α1, γ2, β2, α2
         self.adaln = nn.Sequential(
             nn.GELU(),
-            nn.Linear(cond_dim, 6 * input_dim),
+            nn.Linear(cond_dim, 9 * input_dim),
         )
 
-    def forward(self, x, cond):
+    def forward(self, x, t_emb, cond):
         B, L, D = x.shape
         assert D == self.input_dim
 
-        gamma1, beta1, alpha1, gamma2, beta2, alpha2 = self.adaln(cond).chunk(6, dim=1)
+        g1, b1, a1, g2, b2, a2, g3, b3, a3 = self.adaln(t_emb).chunk(9, dim=1)
 
         # Shape: (B, 1, D)
-        gamma1 = gamma1.unsqueeze(1)
-        beta1  = beta1.unsqueeze(1)
-        alpha1 = alpha1.unsqueeze(1)
-        gamma2 = gamma2.unsqueeze(1)
-        beta2  = beta2.unsqueeze(1)
-        alpha2 = alpha2.unsqueeze(1)
+        g1, b1, a1 = g1.unsqueeze(1), b1.unsqueeze(1), a1.unsqueeze(1)
+        g2, b2, a2 = g2.unsqueeze(1), b2.unsqueeze(1), a2.unsqueeze(1)
+        g3, b3, a3 = g3.unsqueeze(1), b3.unsqueeze(1), a3.unsqueeze(1)
+
 
         h = self.att_ln(x)
-        h = h * (1 + gamma1) + beta1
-        h = self.attention(h)
-        x = x + alpha1 * h
+        h = h * (1 + g1) + b1
+        h = self.self_attn(h)
+        x = x + a1 * h
 
-        h2 = self.mlp_ln(x)
-        h2 = h2 * (1 + gamma2) + beta2
-        h2 = self.mlp(h2)
-        x = x + alpha2 * h2
+        h = self.cross_ln(x)
+        h = h * (1 + g2) + b2
+        h = self.cross_attn(h, cond=cond)
+        x = x + a2 * h
+
+        h = self.mlp_ln(x)
+        h = h * (1 + g3) + b3
+        h = self.mlp(h)
+        x = x + a3 * h
 
         return x
     
@@ -212,13 +221,13 @@ class DiT(nn.Module):
             nn.Linear(cond_dim, cond_dim),
         )
 
-        self.cond_embed = MHA(
-            cond_dim, 
-            num_heads=num_heads, 
-            head_dim=head_dim, 
-            p_drop=attn_pdrop,
-            causal=False,
-        )
+        # self.cond_embed = MHA(
+        #     cond_dim, 
+        #     num_heads=num_heads, 
+        #     head_dim=head_dim, 
+        #     p_drop=attn_pdrop,
+        #     causal=False,
+        # )
 
         self.ln = nn.LayerNorm(input_dim)
         self.proj_out = nn.Linear(input_dim, input_dim)
@@ -228,15 +237,15 @@ class DiT(nn.Module):
             t = t.unsqueeze(-1)
             
         t_embed = self.t_mlp(t)   # (B, cond_dim)
-        t_embed = t_embed.unsqueeze(1)   # (B, 1, cond_dim)
+        # t_embed = t_embed.unsqueeze(1)   # (B, 1, cond_dim)
 
-        # Cross attention with t and cond to get a cond vector
-        cond_vec = self.cond_embed(t_embed, cond=cond) # (B, 1, cond_dim)
-        cond_vec = cond_vec.squeeze(1)   # (B, cond_dim)
+        # # Cross attention with t and cond to get a cond vector
+        # cond_vec = self.cond_embed(t_embed, cond=cond) # (B, 1, cond_dim)
+        # cond_vec = cond_vec.squeeze(1)   # (B, cond_dim)
 
         h = xt
         for block in self.blocks:
-            h = block(h, cond_vec)
+            h = block(h, t_embed, cond)
 
         h = self.ln(h)
         return self.proj_out(h)
