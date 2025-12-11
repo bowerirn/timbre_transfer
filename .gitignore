@@ -2,3 +2,5 @@ data
 .vscode
 *.zip
 __pycache__
+*.wav
+*.pth

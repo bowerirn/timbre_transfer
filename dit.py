@@ -3,6 +3,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+
+
 class RotaryEmbedding(nn.Module):
     def __init__(self, head_dim, rope_theta=10000.0):
         super().__init__()
@@ -136,7 +138,7 @@ class DiT_Block(nn.Module):
 
         self.mlp = nn.Sequential(
             nn.Linear(input_dim, input_dim * ff_scale),
-            nn.Tanh(),
+            nn.GELU(),
             nn.Linear(input_dim * ff_scale, input_dim),
         )
 
@@ -233,6 +235,9 @@ class DiT(nn.Module):
         self.proj_out = nn.Linear(input_dim, input_dim)
 
     def forward(self, xt, t, cond):
+        # xt: mel spectrogram of the target instrument
+        # t: time vector
+        # cond: mel spectrogram of the conditioning instrument (same shape as xt)
         if t.dim() == 1:
             t = t.unsqueeze(-1)
             
@@ -249,3 +254,47 @@ class DiT(nn.Module):
 
         h = self.ln(h)
         return self.proj_out(h)
+    
+
+
+
+
+
+
+
+
+
+
+def init_dit(model: DiT):
+    """
+    Initialize DiT weights for stable flow-matching training.
+    Call *after* constructing the DiT instance:
+        dit = DiT(...)
+        init_dit(dit)
+    """
+
+    # 1) Default: Xavier for all Linear layers, bias = 0
+    for m in model.modules():
+        if isinstance(m, nn.Linear):
+            nn.init.xavier_uniform_(m.weight)
+            if m.bias is not None:
+                nn.init.zeros_(m.bias)
+
+    # 2) Zero-init proj_out (residual flow output)
+    nn.init.zeros_(model.proj_out.weight)
+    nn.init.zeros_(model.proj_out.bias)
+
+    # 3) Zero-init AdaLN output layers in each block
+    for block in model.blocks:
+        # block.adaln = GELU -> Linear(cond_dim, 9 * input_dim)
+        last = block.adaln[-1]
+        if isinstance(last, nn.Linear):
+            nn.init.zeros_(last.weight)
+            nn.init.zeros_(last.bias)
+
+    # 4) (Optional but nice) soften t_mlp final layer
+    #    If you want, you can also zero its last layer:
+    last_t = model.t_mlp[-1]
+    if isinstance(last_t, nn.Linear):
+        nn.init.zeros_(last_t.weight)
+        nn.init.zeros_(last_t.bias)

@@ -9,15 +9,16 @@ from frechet_audio_distance import FrechetAudioDistance
 
 
 
-def eval(model, test_loader, dataset):
+def eval(model, test_loader, dataset, inst):
     with torch.no_grad():
         for _, (cond, target) in enumerate(test_loader):
             cond, target = cond.to(model.device), target.to(model.device)
-            pred = model.sample(cond, steps=20, cfg_strength=3) * dataset.std + dataset.mu
+            pred = model.sample(cond, steps=25, cfg_strength=3) * dataset.std + dataset.mu
             target = target * dataset.std + dataset.mu
 
-            pred_wav = mel2wav(pred.transpose(-2, -1), out_fn=[f"model_eval/mel/pred/mel_pred_{i}.wav" for i in range(pred.shape[0])])
-            tgt_wav = mel2wav(target.transpose(-2, -1), out_fn=[f"model_eval/mel/target/mel_target_{i}.wav" for i in range(target.shape[0])])
+            pred_wav = mel2wav(pred.transpose(-2, -1), out_fn=[f"results/mel/{inst}/pred/mel_pred_{inst}_{i}.wav" for i in range(pred.shape[0])])
+            tgt_wav = mel2wav(target.transpose(-2, -1), out_fn=[f"results/mel/{inst}/target/mel_target_{inst}_{i}.wav" for i in range(target.shape[0])])
+            cond_wav = mel2wav(cond.transpose(-2, -1), out_fn=[f"results/mel/{inst}/cond/mel_target_{inst}_{i}.wav" for i in range(target.shape[0])])
 
         fad = FrechetAudioDistance(
             model_name="vggish",
@@ -26,7 +27,7 @@ def eval(model, test_loader, dataset):
             use_activation=False,
         )
 
-        fad_value = fad.score("./model_eval/mel/pred/", "./model_eval/mel/target/")
+        fad_value = fad.score(f"./results/mel/{inst}/pred/", f"./model_eval/mel/{inst}/target/")
         print(f"FAD = {fad_value}")
 
         return fad_value
@@ -55,7 +56,7 @@ if __name__ == '__main__':
 
 
 
-    ckpt_path = "mel_ckpt.pth"
+    ckpt_path = "mel_strings_ckpt.pth"
     ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
 
     model.load_state_dict(ckpt["model_state_dict"])
