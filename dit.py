@@ -183,6 +183,22 @@ class DiT_Block(nn.Module):
     
 
 
+
+class CondEncoder(nn.Module):
+    def __init__(self, input_dim, hidden_dim):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.GELU(),
+            nn.Linear(hidden_dim, input_dim),
+        )
+
+    def forward(self, cond):  # (B, L, D)
+        return self.net(cond)
+
+
+
+
 class DiT(nn.Module):
     def __init__(
         self,
@@ -202,6 +218,10 @@ class DiT(nn.Module):
 
         self.input_dim = input_dim
         self.cond_dim = cond_dim
+
+        self.cond_encoder = CondEncoder(input_dim, input_dim * ff_scale)
+        self.in_conv = nn.Conv1d(input_dim, input_dim, kernel_size=3, padding="same")
+        self.out_conv = nn.Conv1d(input_dim, input_dim, kernel_size=3, padding="same")
 
         self.blocks = nn.ModuleList([
             DiT_Block(
@@ -223,13 +243,6 @@ class DiT(nn.Module):
             nn.Linear(cond_dim, cond_dim),
         )
 
-        # self.cond_embed = MHA(
-        #     cond_dim, 
-        #     num_heads=num_heads, 
-        #     head_dim=head_dim, 
-        #     p_drop=attn_pdrop,
-        #     causal=False,
-        # )
 
         self.ln = nn.LayerNorm(input_dim)
         self.proj_out = nn.Linear(input_dim, input_dim)
@@ -242,17 +255,21 @@ class DiT(nn.Module):
             t = t.unsqueeze(-1)
             
         t_embed = self.t_mlp(t)   # (B, cond_dim)
-        # t_embed = t_embed.unsqueeze(1)   # (B, 1, cond_dim)
+        cond_enc = self.cond_encoder(cond)
 
-        # # Cross attention with t and cond to get a cond vector
-        # cond_vec = self.cond_embed(t_embed, cond=cond) # (B, 1, cond_dim)
-        # cond_vec = cond_vec.squeeze(1)   # (B, cond_dim)
+        cond_vec = cond_enc.mean(dim=1)
+        ctx = cond_vec + t_embed
 
-        h = xt
+        
+
+        h = self.in_conv(xt.transpose(-1, -2)).transpose(-1, -2)
+
         for block in self.blocks:
-            h = block(h, t_embed, cond)
+            h = block(h, ctx, cond_enc)
 
         h = self.ln(h)
+        h = self.out_conv(h.transpose(-1, -2)).transpose(-1, -2)
+
         return self.proj_out(h)
     
 
@@ -291,10 +308,3 @@ def init_dit(model: DiT):
         if isinstance(last, nn.Linear):
             nn.init.zeros_(last.weight)
             nn.init.zeros_(last.bias)
-
-    # 4) (Optional but nice) soften t_mlp final layer
-    #    If you want, you can also zero its last layer:
-    last_t = model.t_mlp[-1]
-    if isinstance(last_t, nn.Linear):
-        nn.init.zeros_(last_t.weight)
-        nn.init.zeros_(last_t.bias)

@@ -25,7 +25,7 @@ FMAX       = 12000.0
 
 # Cropping parameters
 N_FRAMES           = 512    # length in frames for each crop
-SEGMENTS_PER_FILE  = 50      # how many random crops per file-id group
+SEGMENTS_PER_FILE  = 25      # how many random crops per file-id group
 SEED               = 9001
 
 # I/O paths

@@ -20,15 +20,10 @@ def train(
     n_test_examples = 10,
     n_test_epochs = 50,
     inst = 'piano',
+    ckpt = None,
 ):
 
-
-
-
-    set_seed(seed)
-
-    batch_size = 100
-    
+    set_seed(seed)    
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print("Running on", device)
@@ -43,7 +38,7 @@ def train(
         ff_scale = 2,
         cond_dim = None
     )
-    # init_dit(dit)
+    init_dit(dit)
 
     model = FlowModel(dit, cfg_drop_prob=0.15).to(device)
 
@@ -75,12 +70,26 @@ def train(
         eta_min=1e-6,
     )
 
+    epoch_losses = []
+    fads = []
+    start_epoch = 0
+
+    if ckpt is not None:
+        print("hi")
+        ckpt = torch.load(ckpt, map_location=device, weights_only=False)
+        model.load_state_dict(ckpt["model_state_dict"])
+        optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+        
+        epoch_losses = ckpt["epoch_losses"]
+        fads = ckpt["fads"]
+        start_epoch = ckpt["epoch"] + 1
+
+        print(start_epoch, len(epoch_losses))
+
 
     model.train()
 
-    epoch_losses = []
-    fads = []
-    for epoch in range(epochs):
+    for epoch in range(start_epoch, epochs):
         
         with trange(len(train_loader), ascii=True) as t:
 
@@ -88,16 +97,26 @@ def train(
             scaler = torch.amp.GradScaler('cuda')
             
             for i, (cond, target) in enumerate(train_loader):
+
+                
                 cond, target = cond.to(device), target.to(device)
 
                 optimizer.zero_grad()
 
+                # with torch.amp.autocast("cuda", dtype=torch.bfloat16):
                 loss = model(cond, target)
+                
                 loss.backward()
                 optimizer.step()
+
+                # scaler.scale(loss).backward()
+                # scaler.step(optimizer)
+                # scaler.update()
+
                 scheduler.step()
 
                 loss_mavg = (loss_mavg * i + loss) / (i + 1)
+
                 # this is used to set a description in the tqdm progress bar 
                 t.update(1)
                 t.set_description(f"epoch: {epoch}, loss: {loss_mavg}")
@@ -105,18 +124,21 @@ def train(
         epoch_losses.append(loss_mavg.item())
 
         if epoch % n_test_epochs == 0:
-            fads.append(eval(model, test_loader, dataset, inst))
+            try:
+                fads.append(eval(model, test_loader, dataset, inst))
+            except Exception as e:
+                print(f"Warning, FAD evaluation at epoch {epoch} failed with exception {str(e)}")
+                fads.append(0)
 
         if (epoch + 1) % 500 == 0:
             torch.save({
                 "epoch": epoch,
-                "count": i,
                 "model_state_dict": model.state_dict(),
                 "optimizer_state_dict": optimizer.state_dict(),
-                "loss": loss_mavg,
+                "scheduler_state_dict": scheduler.state_dict(),
                 "epoch_losses": epoch_losses,
                 "fads": fads,
-            }, f"mel_ckpt_e{epoch}.pth")
+            }, f"results/mel/mel_{inst}_ckpt_e{epoch}.pth")
 
     fads.append(eval(model, test_loader, dataset, inst))
 
@@ -160,12 +182,14 @@ if __name__ == '__main__':
         'seed': 9001,
         'batch_size': 100,
         'epochs': 2000,
-        'lr': 5e-4,
+        'lr': 1e-3,
         'n_test_examples': 10,
         'n_test_epochs': 50,
     }
 
-    train(inst='piano', **kwargs)
+    ckpt = "results/mel/mel_piano_ckpt.pth"
+
+    # train(inst='piano', **kwargs)
     train(inst='vibes', **kwargs)
     train(inst='strings', **kwargs)
     train(inst='clar', **kwargs)
