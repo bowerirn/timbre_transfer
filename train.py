@@ -46,7 +46,7 @@ def train(
 
 
 
-    dataset = StarnetImageDataset(target_inst=inst)
+    dataset = StarnetImageDataset(format="mel", target_inst=inst)
     train_set, test_set = torch.utils.data.random_split(dataset, [len(dataset) - n_test_examples, n_test_examples])
 
     train_loader = DataLoader(
@@ -187,9 +187,7 @@ if __name__ == '__main__':
         'n_test_epochs': 50,
     }
 
-    ckpt = "results/mel/mel_piano_ckpt.pth"
-
-    # train(inst='piano', **kwargs)
+    train(inst='piano', **kwargs)
     train(inst='vibes', **kwargs)
     train(inst='strings', **kwargs)
     train(inst='clar', **kwargs)

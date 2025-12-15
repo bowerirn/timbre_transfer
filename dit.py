@@ -271,6 +271,168 @@ class DiT(nn.Module):
         h = self.out_conv(h.transpose(-1, -2)).transpose(-1, -2)
 
         return self.proj_out(h)
+
+
+
+
+
+
+
+
+
+class DownConv(nn.Module):
+    def __init__(self, hidden_dim):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Conv1d(1, hidden_dim, kernel_size=3, padding="same"),
+            nn.GELU(),
+            nn.MaxPool1d(kernel_size=2, stride=2),
+
+            nn.Conv1d(hidden_dim, hidden_dim, kernel_size=3, padding="same"),
+            nn.GELU(),
+            nn.MaxPool1d(kernel_size=2, stride=2),
+
+            nn.Conv1d(hidden_dim, hidden_dim, kernel_size=3, padding="same"),
+            nn.GELU(),
+            nn.MaxPool1d(kernel_size=2, stride=2),
+
+            nn.Conv1d(hidden_dim, hidden_dim, kernel_size=3, padding="same"),
+            nn.GELU(),
+            nn.MaxPool1d(kernel_size=2, stride=2),
+
+            nn.Conv1d(hidden_dim, hidden_dim, kernel_size=3, padding="same"),
+            nn.GELU(),
+            nn.MaxPool1d(kernel_size=2, stride=2),
+
+            nn.Conv1d(hidden_dim, hidden_dim, kernel_size=3, padding="same"),
+        )
+
+    def forward(self, cond):
+        if cond.ndim == 2:
+            cond = cond.unsqueeze(1) # (B, 1, T)
+        return self.net(cond).transpose(-1, -2) # (B, T//5, D)
+    
+
+
+
+class UpConv(nn.Module):
+    def __init__(self, hidden_dim):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.ConvTranspose1d(hidden_dim, hidden_dim, kernel_size=2, stride=2),
+            nn.GELU(),
+
+            nn.ConvTranspose1d(hidden_dim, hidden_dim, kernel_size=2, stride=2),
+            nn.GELU(),
+
+            nn.ConvTranspose1d(hidden_dim, hidden_dim, kernel_size=2, stride=2),
+            nn.GELU(),
+
+            nn.ConvTranspose1d(hidden_dim, hidden_dim, kernel_size=2, stride=2),
+            nn.GELU(),
+
+            nn.ConvTranspose1d(hidden_dim, hidden_dim, kernel_size=2, stride=2),
+            nn.GELU(),
+
+            nn.Conv1d(hidden_dim, 2, kernel_size=3, padding="same"),
+        )
+
+    def forward(self, cond):
+        return self.net(cond)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+class DiT1D(nn.Module):
+    def __init__(
+        self,
+        input_dim,
+        num_heads,
+        head_dim,
+        n_blocks=4,
+        attn_pdrop=0.1,
+        causal=False,
+        ff_scale=2,
+        cond_dim=None,   # if None, use input_dim
+    ):
+        super().__init__()
+
+        if cond_dim is None:
+            cond_dim = input_dim
+
+        self.input_dim = input_dim
+        self.cond_dim = cond_dim
+
+        self.cond_encoder = DownConv(input_dim)
+        self.in_conv = DownConv(input_dim)
+
+             
+        self.out_conv = UpConv(input_dim)
+
+        self.blocks = nn.ModuleList([
+            DiT_Block(
+                input_dim=input_dim,
+                num_heads=num_heads,
+                head_dim=head_dim,
+                attn_pdrop=attn_pdrop,
+                causal=causal,
+                ff_scale=ff_scale,
+                cond_dim=cond_dim,
+            )
+            for _ in range(n_blocks)
+        ])
+
+
+        self.t_mlp = nn.Sequential(
+            nn.Linear(1, input_dim),
+            nn.GELU(),
+            nn.Linear(input_dim, input_dim),
+        )
+
+
+        self.ln = nn.LayerNorm(input_dim)
+        self.proj_out = nn.Conv1d(2, 1, kernel_size=1, padding="same")
+
+    def forward(self, xt, t, cond):
+        # xt: mel spectrogram of the target instrument
+        # t: time vector
+        # cond: mel spectrogram of the conditioning instrument (same shape as xt)
+        if t.ndim == 1:
+            t = t.unsqueeze(-1)
+
+            
+        t_embed = self.t_mlp(t)   # (B, cond_dim)
+        cond_enc = self.cond_encoder(cond)
+
+        cond_vec = cond_enc.mean(dim=1)
+        ctx = cond_vec + t_embed
+
+        
+
+        h = self.in_conv(xt) # (B, T, D)
+
+
+        for block in self.blocks:
+            h = block(h, ctx, cond_enc)
+
+        h = self.ln(h)
+
+        h = self.out_conv(h.transpose(-1, -2)) # (B, 2, T)
+
+        return self.proj_out(h).squeeze(1)
     
 
 

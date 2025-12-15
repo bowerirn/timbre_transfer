@@ -10,12 +10,13 @@ from collections import defaultdict
 
 # Audio / STFT geometry (must match your mel setup)
 SR         = 24000
+RESAMPLE_SR = 16000
 WIN_LENGTH = 1024
 HOP_LENGTH = 256
 
 # Cropping in *mel frames*
-N_FRAMES          = 512    # number of mel frames you used
-SEGMENTS_PER_FILE = 50      # how many random crops per file-id group
+N_FRAMES          = 256    # number of mel frames you used
+SEGMENTS_PER_FILE = 25      # how many random crops per file-id group
 SEED              = 9001
 
 # I/O
@@ -149,11 +150,13 @@ def build_audio_crops():
 
             for inst, y in y_by_inst.items():
                 seg = y[sample_start:sample_end]  # (segment_length,)
+                seg = librosa.resample(seg, orig_sr=SR, target_sr=RESAMPLE_SR).astype(np.float32)
+                seg = seg[:32768]
                 all_audios.append(seg.astype(np.float32))
                 all_file_ids.append(file_id)
                 all_insts.append(inst)
                 all_seg_ids.append(seg_idx)
-
+    segment_length = 32768
     if len(all_audios) == 0:
         raise RuntimeError("No valid audio crops created; check N_FRAMES / data length")
 

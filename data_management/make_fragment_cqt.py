@@ -16,7 +16,6 @@ sys.path.append('.')
 # BigVGAN / mel parameters
 SR         = 24000
 HOP_LENGTH = 256
-FMIN       = 0.0
 
 N_BINS          = 84    # e.g. 7 octaves * 12 semitones
 BINS_PER_OCTAVE = 12
@@ -51,6 +50,7 @@ def compute_cqt_logmag(y_np: np.ndarray) -> np.ndarray:
         fmin=FMIN,
         n_bins=N_BINS,
         bins_per_octave=BINS_PER_OCTAVE,
+        center=False,
     )  # (n_bins, T), complex
     mag = np.abs(C)
     # Avoid log(0)
